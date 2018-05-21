@@ -1,3 +1,5 @@
+#pragma once
+
 #include <signal.h>
 #include <unistd.h>
 #include <sys/syscall.h>
@@ -24,11 +26,12 @@ public:
 private:
     template <typename T, typename E, typename EnableFunc>
         void complete_timers(T& timers, E& expired_timers, EnableFunc&& enable_fn);
-public:
     void enable_timer(steady_clock_type::time_point when);
-    void add_timer(timer<steady_clock_type>* tmr);
     bool queue_timer(timer<steady_clock_type>* tmr);
+public:
+    void add_timer(timer<steady_clock_type>* tmr);
     void del_timer(timer<steady_clock_type>* tmr);
+    void expired_timer(timer<steady_clock_type>::duration delta, timer<steady_clock_type>::callback_t &&callback);
 
     friend class timer<>;
     friend class Singleton<timer_manager>;
@@ -41,6 +44,13 @@ void timer_manager::enable_timer(steady_clock_type::time_point when)
     its.it_value = to_timespec(when);
     auto ret = timer_settime(_steady_clock_timer, TIMER_ABSTIME, &its, NULL);
     throw_system_error_on(ret == -1);
+}
+
+
+void timer_manager::expired_timer(timer<steady_clock_type>::duration delta, timer<steady_clock_type>::callback_t &&callback)
+{
+    timer<steady_clock_type>* pt = new timer<steady_clock_type>(std::move(callback), true);
+    pt->arm(delta);
 }
 
 void timer_manager::add_timer(timer<steady_clock_type>* tmr)
@@ -96,9 +106,9 @@ void timer_manager::complete_timers(T& timers, E& expired_timers, EnableFunc&& e
     for (auto& t : expired_timers) {
         t._expired = true;
     }
-
+    using timer_type = typename T::timer_t;
     while (!expired_timers.empty()) {
-        auto t = &*expired_timers.begin();
+        timer_type* t = &*expired_timers.begin();
         expired_timers.pop_front();
         t->_queued = false;
         if (t->_armed) {
@@ -106,6 +116,8 @@ void timer_manager::complete_timers(T& timers, E& expired_timers, EnableFunc&& e
             if (t->_period) {
                 t->readd_periodic();
             }
+            if (t->_need_disposer)
+                std::shared_ptr<timer_type> p(t);
             try {
                 t->_callback();
             } catch (...) {
@@ -133,7 +145,7 @@ timer_manager::~timer_manager()
 
 template <typename Clock>
 inline
-timer<Clock>::timer(callback_t&& callback) : _callback(std::move(callback)) {
+timer<Clock>::timer(callback_t&& callback, bool need_disposer) : _callback(std::move(callback)), _need_disposer(need_disposer) {
 }
 
 template <typename Clock>
@@ -142,6 +154,7 @@ timer<Clock>::~timer() {
     if (_queued) {
         timer_manager::Instance().del_timer(this);
     }
+    std::cout<<"timer destroctor.."<<std::endl;
 }
 
 template <typename Clock>

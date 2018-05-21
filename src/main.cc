@@ -1,6 +1,6 @@
 #include <iostream>
 #include <thread>
-
+#include <memory>
 #include "timer/timer-manager.hh"
 
 using namespace std;
@@ -11,8 +11,7 @@ int main(int argc, char *argv[])
     t1.arm(std::chrono::microseconds(1000));
     //tmanager.add_timer(&t1);
 
-    timer<steady_clock_type>  t2([](){cout<<"t2 ------ timeout!"<<endl;});
-    t2.arm(std::chrono::microseconds(2000));
+    timer_manager::Instance().expired_timer(std::chrono::microseconds(3000), [](){cout<<"expired --- timeout!"<<endl;});
 
     timer<steady_clock_type>  t3([](){cout<<"t3 ------ timeout!"<<endl;});
     t3.arm(std::chrono::microseconds(1000));

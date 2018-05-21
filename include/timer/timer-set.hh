@@ -12,6 +12,7 @@
 template<typename Timer, boost::intrusive::list_member_hook<> Timer::*link>
 class timer_set {
 public:
+    using timer_t = Timer;
     using time_point = typename Timer::time_point;
     using timer_list_t = boost::intrusive::list<Timer, boost::intrusive::member_hook<Timer, boost::intrusive::list_member_hook<>, link>>;
 private:

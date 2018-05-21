@@ -24,6 +24,7 @@ private:
     bool _armed = false;
     bool _queued = false;
     bool _expired = false;
+    bool _need_disposer = false;
     void readd_periodic();
     void arm_state(time_point until, boost::optional<duration> period);
 public:
@@ -34,7 +35,7 @@ public:
         t._queued = false;
         t._armed = false;
     }
-    explicit timer(callback_t&& callback);
+    explicit timer(callback_t&& callback, bool need_disposer = false);
     ~timer();
     void set_callback(callback_t&& callback);
     void arm(time_point until, boost::optional<duration> period = {});
