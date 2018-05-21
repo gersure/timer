@@ -73,6 +73,8 @@ void timer_manager::del_timer(timer<steady_clock_type>* tmr)
     } else {
         _timers.remove(*tmr);
     }
+    if (tmr->_need_disposer)
+        tmr.~timer();
 }
 
 timer_manager::timer_manager()
@@ -154,7 +156,6 @@ timer<Clock>::~timer() {
     if (_queued) {
         timer_manager::Instance().del_timer(this);
     }
-    std::cout<<"timer destroctor.."<<std::endl;
 }
 
 template <typename Clock>
