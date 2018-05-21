@@ -28,8 +28,8 @@ private:
         void complete_timers(T& timers, E& expired_timers, EnableFunc&& enable_fn);
     void enable_timer(steady_clock_type::time_point when);
     bool queue_timer(timer<steady_clock_type>* tmr);
-public:
     void add_timer(timer<steady_clock_type>* tmr);
+public:
     void del_timer(timer<steady_clock_type>* tmr);
     void expired_timer(timer<steady_clock_type>::duration delta, timer<steady_clock_type>::callback_t &&callback);
 
@@ -73,8 +73,9 @@ void timer_manager::del_timer(timer<steady_clock_type>* tmr)
     } else {
         _timers.remove(*tmr);
     }
-    if (tmr->_need_disposer)
-        tmr.~timer();
+    if (tmr->_need_disposer){
+        tmr->~timer();
+    }
 }
 
 timer_manager::timer_manager()
@@ -114,12 +115,13 @@ void timer_manager::complete_timers(T& timers, E& expired_timers, EnableFunc&& e
         expired_timers.pop_front();
         t->_queued = false;
         if (t->_armed) {
+            std::shared_ptr<timer_type> p;
             t->_armed = false;
             if (t->_period) {
                 t->readd_periodic();
+            }else if (t->_need_disposer){
+                p.reset(t);
             }
-            if (t->_need_disposer)
-                std::shared_ptr<timer_type> p(t);
             try {
                 t->_callback();
             } catch (...) {
