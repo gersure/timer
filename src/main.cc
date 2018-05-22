@@ -14,7 +14,7 @@ int main(int argc, char *argv[])
     timer_manager::Instance().expired_timer(std::chrono::microseconds(3000), [](){cout<<"expired --- timeout!"<<endl;});
 
     timer<steady_clock_type>  t3([](){cout<<"t3 ------ timeout!"<<endl;});
-    t3.arm(std::chrono::microseconds(1000));
+    t3.arm_periodic(std::chrono::microseconds(1000));
 
 //    tmanager._signals.poll_signal();
 

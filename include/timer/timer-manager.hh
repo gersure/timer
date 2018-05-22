@@ -73,9 +73,9 @@ void timer_manager::del_timer(timer<steady_clock_type>* tmr)
     } else {
         _timers.remove(*tmr);
     }
-    if (tmr->_need_disposer){
-        tmr->~timer();
-    }
+//    if (tmr->_need_disposer){
+//        tmr->~timer();
+//    }
 }
 
 timer_manager::timer_manager()
