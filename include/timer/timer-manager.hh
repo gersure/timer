@@ -12,6 +12,7 @@
 #include "thread_pool.hh"
 #include "signal-manager.hh"
 
+using mtimer_t = timer<>;
 
 class timer_manager : public Singleton<timer_manager>{
     timer_t _steady_clock_timer = {};

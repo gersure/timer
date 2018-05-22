@@ -1,5 +1,9 @@
 #pragma once
 
+#include <chrono>
+#include <system_error>
+
+using steady_clock_type = std::chrono::steady_clock;
 
 inline void throw_system_error_on(bool condition, const char* what_arg="")
 //inline void throw_system_error_on(bool condition, const char* what_arg)

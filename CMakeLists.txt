@@ -104,7 +104,8 @@ endif()
 set(CMAKE_EXE_LINKER_FLAGS "-lrt -lpthread")
  
 set(SOURCES
-        src/main.cc
+        src/example.cc
+        src/example_class.cc
 )
 
 include_directories(
@@ -130,8 +131,11 @@ set(${PROJECT_NAME_UP}_IMPORT_LIB ${${PROJECT_NAME}_SHARED_LIB})
 #add_library(${${PROJECT_NAME_UP}_STATIC_LIB} STATIC ${SOURCES})
 #target_link_libraries(${${PROJECT_NAME_UP}_STATIC_LIB}  ${THIRDPARTY_LIBS})
  
-add_executable(${PROJECT_NAME} ${SOURCES})
-target_link_libraries(${PROJECT_NAME}  ${THIRDPARTY_LIBS})
+foreach(sourcefile ${SOURCES})
+    get_filename_component(exename ${sourcefile} NAME_WE)
+    add_executable(${exename} ${sourcefile})
+    target_link_libraries(${exename}  ${THIRDPARTY_LIBS})
+endforeach(sourcefile)
  
  
 # Installation and packaging
@@ -179,13 +183,13 @@ install(DIRECTORY include/${PROJECT_NAME} COMPONENT devel DESTINATION "${CMAKE_I
 #  INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
 #)
 
-install(
-  TARGETS ${PROJECT_NAME}
-  EXPORT ${PROJECT_NAME}Targets
-  COMPONENT devel
-  RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
-  INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
-)
+#install(
+#  TARGETS ${PROJECT_NAME}
+#  EXPORT ${PROJECT_NAME}Targets
+#  COMPONENT devel
+#  RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+#  INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+#)
  
 install(
   EXPORT ${PROJECT_NAME}Targets
