@@ -186,6 +186,16 @@ void timer<Clock>::arm(time_point until, boost::optional<duration> period) {
 
 template <typename Clock>
 inline
+void timer<Clock>::rearm(duration delta) {
+    if (_armed) {
+        cancel();
+    }
+    arm(Clock::now() + delta);
+}
+
+
+template <typename Clock>
+inline
 void timer<Clock>::rearm(time_point until, boost::optional<duration> period) {
     if (_armed) {
         cancel();

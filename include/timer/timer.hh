@@ -38,9 +38,10 @@ public:
     explicit timer(callback_t&& callback, bool need_disposer = false);
     ~timer();
     void set_callback(callback_t&& callback);
-    void arm(time_point until, boost::optional<duration> period = {});
-    void rearm(time_point until, boost::optional<duration> period = {});
     void arm(duration delta);
+    void arm(time_point until, boost::optional<duration> period = {});
+    void rearm(duration delta);
+    void rearm(time_point until, boost::optional<duration> period = {});
     void arm_periodic(duration delta);
     bool armed() const { return _armed; }
     bool cancel();
