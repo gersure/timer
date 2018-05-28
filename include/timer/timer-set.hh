@@ -8,13 +8,15 @@
 #include <boost/intrusive/list.hpp>
 #include "bitset-iter.hh"
 
+    using namespace boost::intrusive;
 
-template<typename Timer, boost::intrusive::list_member_hook<> Timer::*link>
+template<typename Timer, boost::intrusive::list_member_hook<link_mode<auto_unlink>> Timer::*link>
 class timer_set {
 public:
     using timer_t = Timer;
     using time_point = typename Timer::time_point;
-    using timer_list_t = boost::intrusive::list<Timer, boost::intrusive::member_hook<Timer, boost::intrusive::list_member_hook<>, link>>;
+    //   using timer_list_t = boost::intrusive::list<Timer, boost::intrusive::member_hook<Timer, boost::intrusive::list_member_hook<>, link>>;
+    using timer_list_t = boost::intrusive::list<Timer, member_hook<Timer, list_member_hook<link_mode<auto_unlink>>, link>, constant_time_size<false>>;
 private:
     using duration = typename Timer::duration;
     using timestamp_t = typename Timer::duration::rep;
@@ -78,24 +80,7 @@ public:
         }
     }
 
-    /**
-     * Adds timer to the active set.
-     *
-     * The value returned by timer.get_timeout() is used as timer's expiry. The result
-     * of timer.get_timeout() must not change while the timer is in the active set.
-     *
-     * Preconditions:
-     *  - this timer must not be currently in the active set or in the expired set.
-     *
-     * Postconditions:
-     *  - this timer will be added to the active set until it is expired
-     *    by a call to expire() or removed by a call to remove().
-     *
-     * Returns true if and only if this timer's timeout is less than get_next_timeout().
-     * When this function returns true the caller should reschedule expire() to be
-     * called at timer.get_timeout() to ensure timers are expired in a timely manner.
-     */
-    bool insert(Timer& timer)
+   bool insert(Timer& timer)
     {
         auto timestamp = get_timestamp(timer);
         auto index = get_index(timestamp);
@@ -110,18 +95,7 @@ public:
         return false;
     }
 
-    /**
-     * Removes timer from the active set.
-     *
-     * Preconditions:
-     *  - timer must be currently in the active set. Note: it must not be in
-     *    the expired set.
-     *
-     * Postconditions:
-     *  - timer is no longer in the active set.
-     *  - this object will no longer hold any references to this timer.
-     */
-    void remove(Timer& timer)
+   void remove(Timer& timer)
     {
         auto index = get_index(timer);
         auto& list = _buckets[index];
@@ -131,21 +105,7 @@ public:
         }
     }
 
-    /**
-     * Expires active timers.
-     *
-     * The time points passed to this function must be monotonically increasing.
-     * Use get_next_timeout() to query for the next time point.
-     *
-     * Preconditions:
-     *  - the time_point passed to this function must not be lesser than
-     *    the previous one passed to this function.
-     *
-     * Postconditons:
-     *  - all timers from the active set with Timer::get_timeout() <= now are moved
-     *    to the expired set.
-     */
-    timer_list_t expire(time_point tnow)
+   timer_list_t expire(time_point tnow)
     {
         timer_list_t exp;
         auto timestamp = get_timestamp(tnow);
@@ -185,21 +145,12 @@ public:
         return exp;
     }
 
-    /**
-     * Returns a time point at which expire() should be called
-     * in order to ensure timers are expired in a timely manner.
-     *
-     * Returned values are monotonically increasing.
-     */
-    time_point get_next_timeout() const
+   time_point get_next_timeout() const
     {
         return time_point(duration(std::max(_last, _next)));
     }
 
-    /**
-     * Clears both active and expired timer sets.
-     */
-    void clear()
+   void clear()
     {
         for (int i : bitsets::for_each_set(_non_empty_buckets)) {
             _buckets[i].clear();
@@ -215,9 +166,6 @@ public:
         return res;
     }
 
-    /**
-     * Returns true if and only if there are no timers in the active set.
-     */
     bool empty() const
     {
         return _non_empty_buckets.none();

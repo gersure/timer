@@ -9,18 +9,19 @@
 #include <future>
 #include <functional>
 #include <stdexcept>
-#include "singleton.hh"
+#include <sys/eventfd.h>
 
-class thread_pool : public Singleton<thread_pool> {
+class thread_pool {
 public:
-    friend Singleton<thread_pool>;
     template<class F, class... Args>
     auto enqueue(F&& f, Args&&... args)
         -> std::future<typename std::result_of<F(Args...)>::type>;
-protected:
-private:
+    void notify_monitor();
+
     ~thread_pool() noexcept;
     thread_pool();
+protected:
+private:
 
     void work();
     void recycle();
@@ -33,13 +34,14 @@ private:
     // synchronization
     std::mutex queue_mutex;
     std::condition_variable condition;
-    bool stop;
+    std::atomic<bool> stop;
     unsigned waiters;
 
     // for recycle idle threads
     static thread_local bool working;
     std::atomic< unsigned > maxIdle;
-//    std::thread monitor;
+    int         monitorfd;
+    std::thread monitor;
 };
 
 thread_local bool thread_pool::working = true;
@@ -49,7 +51,15 @@ inline thread_pool::thread_pool()
     :   stop(false), waiters(0)
 {
     maxIdle = std::max< unsigned >(1, static_cast<int>(std::thread::hardware_concurrency()));
-//    monitor = std::thread([this]() { this->recycle(); } );
+     monitorfd = ::eventfd(1,0);
+    assert(monitorfd != -1);
+        for (int i= 0; i < (maxIdle*2+1); i++)
+        {
+            std::thread  t([this]() { this->work(); } );
+            workers.push_back(std::move(t));
+        }
+
+    monitor = std::thread([this]() { this->recycle(); } );
 }
 
 // add new work item to the pool
@@ -74,11 +84,11 @@ auto thread_pool::enqueue(F&& f, Args&&... args)
         tasks.emplace([task](){ (*task)(); });
 
         // if there is no idle thread, create one, do not let this task wait
-        if (waiters == 0 && workers.size() < (maxIdle*2+1))
-        {
-            std::thread  t([this]() { this->work(); } );
-            workers.push_back(std::move(t));
-        }
+      //  if (waiters == 0 && workers.size() < (maxIdle*2+1))
+      //  {
+      //      std::thread  t([this]() { this->work(); } );
+      //      workers.push_back(std::move(t));
+      //  }
     }
     condition.notify_one();
     return res;
@@ -95,7 +105,10 @@ inline thread_pool::~thread_pool() noexcept
     for(auto& worker: workers)
         worker.join();
 
-//    monitor.join();
+    notify_monitor();
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    close(monitorfd);
+    monitor.join();
 }
 
 inline void thread_pool::work()
@@ -126,23 +139,36 @@ inline void thread_pool::work()
     // if reach here, this thread is recycled by monitor thread
 }
 
-inline void thread_pool::recycle()
+//inline void thread_pool::recycle()
+//{
+//    while (!stop)
+//    {
+//        std::this_thread::sleep_for(std::chrono::seconds(60));
+//
+//        std::unique_lock<std::mutex> lock(this->queue_mutex);
+//        if (stop)
+//            return;
+//
+//        auto nw = waiters;
+//        while (nw -- > maxIdle)
+//        {
+//            // the thread which fetch this task item will exit
+//            tasks.emplace([this]() { working = false; });
+//            condition.notify_one();
+//        }
+//    }
+//}
+void thread_pool::notify_monitor()
 {
-    while (!stop)
-    {
-        std::this_thread::sleep_for(std::chrono::seconds(60));
-
-        std::unique_lock<std::mutex> lock(this->queue_mutex);
-        if (stop)
-            return;
-
-        auto nw = waiters;
-        while (nw -- > maxIdle)
-        {
-            // the thread which fetch this task item will exit
-            tasks.emplace([this]() { working = false; });
-            condition.notify_one();
-        }
-    }
+    eventfd_t  value = 1;
+    auto ret = write(monitorfd, &value, sizeof(value));
+    assert(ret == sizeof(eventfd_t));
 }
+
+
+inline std::shared_ptr<thread_pool>  make_threadpool()
+{
+    return std::make_shared<thread_pool>();
+}
+
 

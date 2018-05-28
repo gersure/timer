@@ -9,6 +9,8 @@
 
 using steady_clock_type = std::chrono::steady_clock;
 
+using namespace boost::intrusive;
+
 template <typename Clock = steady_clock_type>
 class timer {
 public:
@@ -17,7 +19,8 @@ public:
     typedef Clock clock;
 private:
     using callback_t = std::function<void()>;
-    boost::intrusive::list_member_hook<> _link;
+    //boost::intrusive::list_member_hook<> _link;
+    list_member_hook<link_mode<auto_unlink>> _link;
     callback_t _callback;
     time_point _expiry;
     boost::optional<duration> _period;
@@ -27,6 +30,9 @@ private:
     bool _need_disposer = false;
     void readd_periodic();
     void arm_state(time_point until, boost::optional<duration> period);
+public:
+    //void unlink() { list_member_hook<link_mode<auto_unlink>>::unlink(); }
+    //bool is_linked() { return list_member_hook<link_mode<auto_unlink>>::is_linked(); }
 public:
     timer() = default;
     timer(timer&& t) noexcept : _callback(std::move(t._callback)), _expiry(std::move(t._expiry)), _period(std::move(t._period)),
@@ -49,4 +55,6 @@ public:
     friend class timer_manager;
     friend class timer_set<timer, &timer::_link>;
 };
+
+
 

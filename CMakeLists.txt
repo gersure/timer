@@ -90,7 +90,7 @@ else()
   if(MINGW)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-format")
   endif()
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
   if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -fno-omit-frame-pointer")
     include(CheckCXXCompilerFlag)
@@ -106,6 +106,7 @@ set(CMAKE_EXE_LINKER_FLAGS "-lrt -lpthread")
 set(SOURCES
         src/example.cc
         src/example_class.cc
+        src/example_thread.cc
 )
 
 include_directories(
@@ -191,12 +192,12 @@ install(DIRECTORY include/${PROJECT_NAME} COMPONENT devel DESTINATION "${CMAKE_I
 #  INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
 #)
  
-install(
-  EXPORT ${PROJECT_NAME}Targets
-  COMPONENT devel
-  DESTINATION ${package_config_destination}
-  NAMESPACE ${PROJECT_NAME}::
-)
+#install(
+#  EXPORT ${PROJECT_NAME}Targets
+#  COMPONENT devel
+#  DESTINATION ${package_config_destination}
+#  NAMESPACE ${PROJECT_NAME}::
+#)
  
  
 install(
