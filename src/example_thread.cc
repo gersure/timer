@@ -15,9 +15,20 @@ int main(int argc, char *argv[])
 
     for(int i=0; i< 10;i++){
         pool->enqueue([i]{
-                timer_manager::Instance().expired_timer(std::chrono::microseconds(1), [i]{
+                mtimer_t   t([i]{
                     cout<<"timer:"<<i<<endl;
                     });
+                t.arm(std::chrono::microseconds(10));
+                });
+    }
+
+    for(int i=0; i< 10;i++){
+        pool->enqueue([i]{
+                mtimer_t   t([i]{
+                    cout<<"timer:"<<i<<endl;
+                    });
+                t.arm(std::chrono::microseconds(10));
+                std::this_thread::sleep_for(std::chrono::seconds(1));
                 });
     }
 

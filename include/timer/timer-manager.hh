@@ -81,7 +81,7 @@ public:
 public:
     void add_timer(timer<steady_clock_type>* tmr);
     void del_timer(timer<steady_clock_type>* tmr);
-    void expired_timer(timer<steady_clock_type>::duration delta, timer<steady_clock_type>::callback_t &&callback);
+    //void expired_timer(timer<steady_clock_type>::duration delta, timer<steady_clock_type>::callback_t &&callback);
 
     friend class timer<>;
     friend class Singleton<timer_manager>;
@@ -97,12 +97,12 @@ void timer_manager::enable_timer(steady_clock_type::time_point when)
 }
 
 
-void timer_manager::expired_timer(timer<steady_clock_type>::duration delta, timer<steady_clock_type>::callback_t &&callback)
-{
-    timer<steady_clock_type>* pt = new timer<steady_clock_type>(std::move(callback), true);
-    pt->arm(delta);
-}
-
+//void timer_manager::expired_timer(timer<steady_clock_type>::duration delta, timer<steady_clock_type>::callback_t &&callback)
+//{
+//    timer<steady_clock_type>* pt = new timer<steady_clock_type>(std::move(callback), true);
+//    pt->arm(delta);
+//}
+//
 void timer_manager::add_timer(timer<steady_clock_type>* tmr)
 {
     if (queue_timer(tmr)) {
@@ -191,7 +191,7 @@ timer_manager::~timer_manager()
         }
     };
 
-    //eraser(_expired_timers);
+    eraser(_expired_timers);
 }
 
 void timer_manager::set_thread_pool(std::shared_ptr<thread_pool> pool)
@@ -380,7 +380,4 @@ void thread_pool::recycle()
             timer_manager::Instance()._signals.poll_signal();
     }
 }
-
-
-
 

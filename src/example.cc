@@ -7,6 +7,7 @@ using namespace std;
 int main(int argc, char *argv[])
 {
 
+    timer_manager::Instance().set_thread_pool(make_threadpool());
     {
     timer<steady_clock_type>  t1([](){cout<<"t1 ------ timeout!"<<endl;});
     t1.rearm(std::chrono::microseconds(1000));

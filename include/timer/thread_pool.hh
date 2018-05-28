@@ -53,11 +53,11 @@ inline thread_pool::thread_pool()
     maxIdle = std::max< unsigned >(1, static_cast<int>(std::thread::hardware_concurrency()));
      monitorfd = ::eventfd(1,0);
     assert(monitorfd != -1);
-        for (int i= 0; i < (maxIdle*2+1); i++)
-        {
-            std::thread  t([this]() { this->work(); } );
-            workers.push_back(std::move(t));
-        }
+    //   for (int i= 0; i < (maxIdle*2+1); i++)
+    //   {
+    //       std::thread  t([this]() { this->work(); } );
+    //       workers.push_back(std::move(t));
+    //   }
 
     monitor = std::thread([this]() { this->recycle(); } );
 }
@@ -84,11 +84,11 @@ auto thread_pool::enqueue(F&& f, Args&&... args)
         tasks.emplace([task](){ (*task)(); });
 
         // if there is no idle thread, create one, do not let this task wait
-      //  if (waiters == 0 && workers.size() < (maxIdle*2+1))
-      //  {
-      //      std::thread  t([this]() { this->work(); } );
-      //      workers.push_back(std::move(t));
-      //  }
+        if (waiters == 0 && workers.size() < (maxIdle*2+1))
+        {
+            std::thread  t([this]() { this->work(); } );
+            workers.push_back(std::move(t));
+        }
     }
     condition.notify_one();
     return res;
