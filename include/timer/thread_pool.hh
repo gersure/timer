@@ -99,7 +99,7 @@ inline thread_pool::~thread_pool() noexcept
 {
     {
         std::unique_lock<std::mutex> lock(queue_mutex);
-        stop = true;
+        stop.store(true, std::memory_order_relaxed);
     }
     condition.notify_all();
     for(auto& worker: workers)

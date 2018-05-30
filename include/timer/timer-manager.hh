@@ -12,7 +12,6 @@
 #include "timer-set.hh"
 #include "thread_pool.hh"
 
-using mtimer_t = timer<>;
 
 inline int alarm_signal()
 {
@@ -43,13 +42,22 @@ inline sigset_t make_empty_sigset_mask()
 
 
 class timer_manager : public Singleton<timer_manager>{
-    timer_t _steady_clock_timer = {};
-    timer_set<timer<>, &timer<>::_link> _timers;
-    timer_set<timer<>, &timer<>::_link>::timer_list_t _expired_timers;
+public:
+    typedef  timer<> mtimer_t;
+    typedef  mtimer_t::timer_id timer_id;
+    typedef  mtimer_t::clock clock;
+    typedef  mtimer_t::duration duration;
+    typedef  mtimer_t::time_point time_point;
+    typedef  mtimer_t::callback_t  callback_t;
+    typedef  timer_set<mtimer_t>::timer_index  timer_index;
+    //typedef  typename std::pair<timer_id, timer_index> timer_ret;
+    using timer_ret = std::pair<timer_id, timer_index>;
+    timer_t  _steady_clock_timer = {};
+    timer_set<mtimer_t> _timers;
 
+private:
     timer_manager();
     ~timer_manager();
-private:
 
     class signals{
         public:
@@ -74,14 +82,14 @@ public:
     signals _signals;
     std::shared_ptr<thread_pool> _thread_pool;
     void set_thread_pool(std::shared_ptr<thread_pool> pool);
-    template <typename T, typename E, typename EnableFunc>
-        void complete_timers(T& timers, E& expired_timers, EnableFunc&& enable_fn);
+
+    template <typename T, typename EnableFunc>
+        void complete_timers(T& timers, EnableFunc&& enable_fn);
     void enable_timer(steady_clock_type::time_point when);
-    bool queue_timer(timer<steady_clock_type>* tmr);
 public:
-    void add_timer(timer<steady_clock_type>* tmr);
-    void del_timer(timer<steady_clock_type>* tmr);
-    //void expired_timer(timer<steady_clock_type>::duration delta, timer<steady_clock_type>::callback_t &&callback);
+    timer_ret add_timer(duration delta, callback_t&& callback);
+    timer_ret add_timer(time_point when, duration delta, callback_t&& callback);
+    void del_timer(timer_ret& ret);
 
     friend class timer<>;
     friend class Singleton<timer_manager>;
@@ -96,33 +104,29 @@ void timer_manager::enable_timer(steady_clock_type::time_point when)
     throw_system_error_on(ret == -1);
 }
 
-
-//void timer_manager::expired_timer(timer<steady_clock_type>::duration delta, timer<steady_clock_type>::callback_t &&callback)
-//{
-//    timer<steady_clock_type>* pt = new timer<steady_clock_type>(std::move(callback), true);
-//    pt->arm(delta);
-//}
-//
-void timer_manager::add_timer(timer<steady_clock_type>* tmr)
+timer_manager::timer_ret  timer_manager::add_timer(duration delta, callback_t&& callback)
 {
-    if (queue_timer(tmr)) {
-        enable_timer(_timers.get_next_timeout());
-    }
+    mtimer_t t(delta, std::move(callback));
+    auto ret = _timers.insert(t);
+    throw_system_error_on(!ret);
+    enable_timer(_timers.get_next_timeout());
+    return {t.get_id(), ret.get()};
 }
 
-bool timer_manager::queue_timer(timer<steady_clock_type>* tmr)
+timer_manager::timer_ret timer_manager::add_timer(time_point when, duration delta, callback_t&& callback)
 {
-    return _timers.insert(*tmr);
+    mtimer_t t;
+    t.set_callback(std::move(callback));
+    t.arm(when, delta);
+    auto ret = _timers.insert(t);
+    throw_system_error_on(!ret);
+    enable_timer(_timers.get_next_timeout());
+    return {t.get_id(), ret.get()};
 }
 
-void timer_manager::del_timer(timer<steady_clock_type>* tmr)
+void timer_manager::del_timer(timer_ret& ret)
 {
-    if (tmr->_expired) {
-        _expired_timers.erase(_expired_timers.iterator_to(*tmr));
-        tmr->_expired = false;
-    } else {
-        _timers.remove(*tmr);
-    }
+    _timers.remove(ret);
 }
 
 timer_manager::timer_manager()
@@ -141,7 +145,7 @@ timer_manager::timer_manager()
     assert(r == 0);
 
     _signals.handle_signal(alarm_signal(), [this] {
-            complete_timers(_timers, _expired_timers, [this] {
+            complete_timers(_timers, [this] {
                 if (!_timers.empty()){
                     enable_timer(_timers.get_next_timeout());
                 }
@@ -150,27 +154,22 @@ timer_manager::timer_manager()
 }
 
 
-template <typename T, typename E, typename EnableFunc>
-void timer_manager::complete_timers(T& timers, E& expired_timers, EnableFunc&& enable_fn) {
-    expired_timers = timers.expire(timers.now());
+template <typename T, typename EnableFunc>
+void timer_manager::complete_timers(T& timers, EnableFunc&& enable_fn) {
+    auto expired_timers = timers.expire(timers.now());
     for (auto& t : expired_timers) {
-        t._expired = true;
+        t.second._expired = true;
     }
-    using timer_type = typename T::timer_t;
     while (!expired_timers.empty()) {
-        timer_type* t = &*expired_timers.begin();
-        expired_timers.pop_front();
-        t->_queued = false;
-        if (t->_armed) {
-            std::shared_ptr<timer_type> p;
-            t->_armed = false;
-            if (t->_period) {
-                t->readd_periodic();
-            }else if (t->_need_disposer){
-                p.reset(t);
+        auto t = expired_timers.begin();
+        if (t->second._armed) {
+            t->second._armed = false;
+            if (t->second._period) {
+                t->second.arm(clock::now() + t->second._period.get(), {t->second._period.get()});
+                _timers.insert(t->second);
             }
             try {
-                t->_callback();
+                t->second._callback();
             } catch (...) {
                 std::runtime_error("Timer callback failed: {}");
             }
@@ -182,17 +181,7 @@ void timer_manager::complete_timers(T& timers, E& expired_timers, EnableFunc&& e
 
 
 timer_manager::~timer_manager()
-{
-    timer_delete(_steady_clock_timer);
-    auto eraser = [](timer_set<timer<>, &timer<>::_link>::timer_list_t& list){
-        while(!list.empty()){
-            auto& timer = *list.begin();
-            timer.cancel();
-        }
-    };
-
-    eraser(_expired_timers);
-}
+{}
 
 void timer_manager::set_thread_pool(std::shared_ptr<thread_pool> pool)
 {
@@ -260,111 +249,10 @@ bool timer_manager::signals::pure_poll_signal() const {
 
 void timer_manager::signals::action(int signo, siginfo_t* siginfo, void* ignore) {
     timer_manager::Instance()._signals._pending_signals.fetch_or(1ull << signo, std::memory_order_relaxed);
-    if (timer_manager::Instance()._thread_pool){
+    if ((timer_manager::Instance()._thread_pool)){
         timer_manager::Instance()._thread_pool->notify_monitor();
     }
 }
-
-
-
-template <typename Clock>
-inline
-timer<Clock>::timer(callback_t&& callback, bool need_disposer)
-    : _callback(std::move(callback)), _need_disposer(need_disposer) {
-}
-
-template <typename Clock>
-inline
-timer<Clock>::~timer() {
-    if (_queued) {
-        timer_manager::Instance().del_timer(this);
-    }
-}
-
-template <typename Clock>
-inline
-void timer<Clock>::set_callback(callback_t&& callback) {
-    _callback = std::move(callback);
-}
-
-template <typename Clock>
-inline
-void timer<Clock>::arm_state(time_point until, boost::optional<duration> period) {
-    assert(!_armed);
-    _period = period;
-    _armed = true;
-    _expired = false;
-    _expiry = until;
-    _queued = true;
-}
-
-template <typename Clock>
-inline
-void timer<Clock>::arm(time_point until, boost::optional<duration> period) {
-    arm_state(until, period);
-    timer_manager::Instance().add_timer(this);
-}
-
-template <typename Clock>
-inline
-void timer<Clock>::rearm(duration delta) {
-    if (_armed) {
-        cancel();
-    }
-    arm(Clock::now() + delta);
-}
-
-
-template <typename Clock>
-inline
-void timer<Clock>::rearm(time_point until, boost::optional<duration> period) {
-    if (_armed) {
-        cancel();
-    }
-    arm(until, period);
-}
-
-template <typename Clock>
-inline
-void timer<Clock>::arm(duration delta) {
-    return arm(Clock::now() + delta);
-}
-
-template <typename Clock>
-inline
-void timer<Clock>::arm_periodic(duration delta) {
-    arm(Clock::now() + delta, {delta});
-}
-
-template <typename Clock>
-inline
-void timer<Clock>::readd_periodic() {
-    //arm_state(Clock::now() + _period.value(), {_period.value()});
-    arm_state(Clock::now() + _period.get(), {_period.get()});
-    timer_manager::Instance().queue_timer(this);
-}
-
-template <typename Clock>
-inline
-bool timer<Clock>::cancel() {
-    if (!_armed) {
-        return false;
-    }
-    _armed = false;
-    if (_queued) {
-        timer_manager::Instance().del_timer(this);
-        _queued = false;
-    }
-    return true;
-}
-
-template <typename Clock>
-inline
-typename timer<Clock>::time_point timer<Clock>::get_timeout() {
-    return _expiry;
-}
-
-
 
 void thread_pool::recycle()
 {
@@ -374,8 +262,6 @@ void thread_pool::recycle()
         auto ret = read(monitorfd, &value, sizeof(value));
         if ( ret != sizeof(value) )
             continue;
-        if(stop.load(std::memory_order_relaxed))
-            return;
         if (timer_manager::Instance()._signals.pure_poll_signal())
             timer_manager::Instance()._signals.poll_signal();
     }

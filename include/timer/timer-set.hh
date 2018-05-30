@@ -5,18 +5,19 @@
 #include <limits>
 #include <bitset>
 #include <array>
+#include <cmath>
+#include <boost/optional.hpp>
 #include <boost/intrusive/list.hpp>
 #include "bitset-iter.hh"
 
-    using namespace boost::intrusive;
-
-template<typename Timer, boost::intrusive::list_member_hook<link_mode<auto_unlink>> Timer::*link>
+template<typename Timer>
 class timer_set {
 public:
-    using timer_t = Timer;
-    using time_point = typename Timer::time_point;
-    //   using timer_list_t = boost::intrusive::list<Timer, boost::intrusive::member_hook<Timer, boost::intrusive::list_member_hook<>, link>>;
-    using timer_list_t = boost::intrusive::list<Timer, member_hook<Timer, list_member_hook<link_mode<auto_unlink>>, link>, constant_time_size<false>>;
+    //using timer_t = typename Timer;
+    using timer_index = int;
+    using timer_id = typename Timer::timer_id;
+    using time_point   = typename Timer::time_point;
+    using timer_list_t = std::unordered_map<timer_id, Timer>;
 private:
     using duration = typename Timer::duration;
     using timestamp_t = typename Timer::duration::rep;
@@ -24,8 +25,8 @@ private:
     static constexpr timestamp_t max_timestamp = std::numeric_limits<timestamp_t>::max();
     static constexpr int timestamp_bits = std::numeric_limits<timestamp_t>::digits;
 
-    // The last bucket is reserved for active timers with timeout <= _last.
     static constexpr int n_buckets = timestamp_bits + 1;
+    static constexpr double n_index_bits = std::ceil(std::sqrt(n_buckets));
 
     std::array<timer_list_t, n_buckets> _buckets;
     timestamp_t _last;
@@ -73,39 +74,41 @@ public:
 
     ~timer_set() {
         for (auto&& list : _buckets) {
-            while (!list.empty()) {
-                auto& timer = *list.begin();
-                timer.cancel();
+            if (!list.empty()) {
+                list.clear();
             }
         }
     }
 
-   bool insert(Timer& timer)
+    boost::optional<timer_index> insert(Timer& timer)
     {
         auto timestamp = get_timestamp(timer);
         auto index = get_index(timestamp);
 
-        _buckets[index].push_back(timer);
+        _buckets[index].insert({timer.get_id(), timer});
         _non_empty_buckets[index] = true;
 
         if (timestamp < _next) {
             _next = timestamp;
-            return true;
+            return {index};
         }
-        return false;
+        return {boost::none};
     }
 
-   void remove(Timer& timer)
+    void remove(const std::pair<timer_id, timer_index>& ret)
     {
-        auto index = get_index(timer);
+        auto index = ret.second;
         auto& list = _buckets[index];
-        list.erase(list.iterator_to(timer));
-        if (list.empty()) {
-            _non_empty_buckets[index] = false;
+        auto search = list.find(ret.first);
+        if (search != list.end()){
+            list.erase(ret.first);
+            if (list.empty()) {
+                _non_empty_buckets[index] = false;
+            }
         }
     }
 
-   timer_list_t expire(time_point tnow)
+    timer_list_t expire(time_point tnow)
     {
         timer_list_t exp;
         auto timestamp = get_timestamp(tnow);
@@ -117,7 +120,8 @@ public:
         auto index = get_index(timestamp);
 
         for (int i : bitsets::for_each_set(_non_empty_buckets, index + 1)) {
-            exp.splice(exp.end(), _buckets[i]);
+            exp.insert( _buckets[i].begin(), _buckets[i].end());
+            _buckets[i].clear();
             _non_empty_buckets[i] = false;
         }
 
@@ -126,12 +130,10 @@ public:
 
         auto& list = _buckets[index];
         while (!list.empty()) {
-            auto& timer = *list.begin();
-            list.pop_front();
-            if (timer.get_timeout() <= tnow) {
-                exp.push_back(timer);
-            } else {
-                insert(timer);
+            auto timer = list.begin();
+            if (timer->second.get_timeout() <= tnow) {
+                exp.insert({timer->second.get_id(), timer->second});
+                remove({timer->second.get_id(), index});
             }
         }
 
@@ -139,7 +141,7 @@ public:
 
         if (_next == max_timestamp && _non_empty_buckets.any()) {
             for (auto& timer : _buckets[get_last_non_empty_bucket()]) {
-                _next = std::min(_next, get_timestamp(timer));
+                _next = std::min(_next, get_timestamp(timer.second));
             }
         }
         return exp;
