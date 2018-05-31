@@ -10,6 +10,9 @@ int main(int argc, char *argv[])
     timer_manager& tm = timer_manager::Instance();
     tm.set_thread_pool(make_threadpool());
     auto ret = tm.add_timer(std::chrono::microseconds(10000),[](){cout<<"t1 ------ timeout!"<<endl;});
+   ret = tm.add_timer(std::chrono::microseconds(12000),[](){cout<<"t1 ------ timeout!"<<endl;});
+   ret = tm.add_timer(std::chrono::microseconds(14000),[](){cout<<"t1 ------ timeout!"<<endl;});
+   ret = tm.add_timer(std::chrono::microseconds(13000),[](){cout<<"t1 ------ timeout!"<<endl;});
 
     std::this_thread::sleep_for(std::chrono::seconds(2));
     cout<<"main end"<<endl;

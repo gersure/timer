@@ -18,6 +18,7 @@ public:
         -> std::future<typename std::result_of<F(Args...)>::type>;
     void notify_monitor();
 
+    bool stopped(){ return stop.load(std::memory_order_relaxed); }
     ~thread_pool() noexcept;
     thread_pool();
 protected:

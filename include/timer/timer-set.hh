@@ -80,19 +80,19 @@ public:
         }
     }
 
-    boost::optional<timer_index> insert(Timer& timer)
+    std::pair<bool, timer_index> insert(Timer& timer)
     {
         auto timestamp = get_timestamp(timer);
         auto index = get_index(timestamp);
-
+        std::cout<<"index:"<<index<<"+1"<<std::endl;
         _buckets[index].insert({timer.get_id(), timer});
         _non_empty_buckets[index] = true;
 
         if (timestamp < _next) {
             _next = timestamp;
-            return {index};
+            return {true ,index};
         }
-        return {boost::none};
+        return {false, index};
     }
 
     void remove(const std::pair<timer_id, timer_index>& ret)
@@ -129,11 +129,19 @@ public:
         _next = max_timestamp;
 
         auto& list = _buckets[index];
-        while (!list.empty()) {
-            auto timer = list.begin();
-            if (timer->second.get_timeout() <= tnow) {
-                exp.insert({timer->second.get_id(), timer->second});
-                remove({timer->second.get_id(), index});
+        for (auto& timer : list) {
+            //auto timer = list.begin();
+            if (timer.second.get_timeout() <= tnow) {
+                exp.insert({timer.second.get_id(), timer.second});
+            }
+            else{
+                if (get_timestamp(timer.second) < _next)
+                    _next = get_timestamp(timer.second);
+            }
+        }
+        for(auto& timer : list){
+            if (timer.second.get_timeout() <= tnow) {
+                remove({timer.second.get_id(), index});
             }
         }
 

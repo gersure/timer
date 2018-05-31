@@ -10,28 +10,23 @@ int main(int argc, char *argv[])
     auto pool = make_threadpool();
     timer_manager::Instance().set_thread_pool(pool);
 
-    timer<steady_clock_type>  t3([](){cout<<"t3 ------ timeout!"<<endl;});
-    t3.arm(std::chrono::microseconds(1000));
+    auto ret = timer_manager::Instance().add_timer(std::chrono::seconds(2), [](){
+            cout<<"timer 2s ..."<<endl;
+            });
+
+    ret = timer_manager::Instance().add_timer(std::chrono::seconds(1), [](){
+            cout<<"timer 1s ..."<<endl;
+            });
 
     for(int i=0; i< 10;i++){
-        pool->enqueue([i]{
-                mtimer_t   t([i]{
-                    cout<<"timer:"<<i<<endl;
-                    });
-                t.arm(std::chrono::microseconds(10));
+        auto ret = timer_manager::Instance().add_timer(std::chrono::seconds(i+1), [](){
+                cout<<"timer ~ ..."<<endl;
                 });
+        if (i==5)
+            timer_manager::Instance().del_timer(ret);
     }
-
-    for(int i=0; i< 10;i++){
-        pool->enqueue([i]{
-                mtimer_t   t([i]{
-                    cout<<"timer:"<<i<<endl;
-                    });
-                t.arm(std::chrono::microseconds(10));
-                std::this_thread::sleep_for(std::chrono::seconds(1));
-                });
-    }
-
+    for(int i=0; i<2; i++)
+        std::this_thread::sleep_for(std::chrono::seconds(10));
     cout<<"main end"<<endl;
 
     return 0;

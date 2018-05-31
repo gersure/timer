@@ -5,6 +5,8 @@
 #include <sys/syscall.h>
 #include <atomic>
 #include <unordered_map>
+#include <boost/thread/thread.hpp>
+#include <boost/thread/locks.hpp>
 
 #include "posix.hh"
 #include "singleton.hh"
@@ -54,7 +56,7 @@ public:
     using timer_ret = std::pair<timer_id, timer_index>;
     timer_t  _steady_clock_timer = {};
     timer_set<mtimer_t> _timers;
-
+    boost::shared_mutex   _timer_mutex;
 private:
     timer_manager();
     ~timer_manager();
@@ -106,27 +108,38 @@ void timer_manager::enable_timer(steady_clock_type::time_point when)
 
 timer_manager::timer_ret  timer_manager::add_timer(duration delta, callback_t&& callback)
 {
+    std::pair<bool, timer_index> ret;
     mtimer_t t(delta, std::move(callback));
-    auto ret = _timers.insert(t);
-    throw_system_error_on(!ret);
-    enable_timer(_timers.get_next_timeout());
-    return {t.get_id(), ret.get()};
+    {
+    boost::unique_lock<boost::shared_mutex> u_timers(_timer_mutex);
+    ret = _timers.insert(t);
+    }
+    if (ret.first)
+        enable_timer(_timers.get_next_timeout());
+    return {t.get_id(), ret.second};
 }
 
 timer_manager::timer_ret timer_manager::add_timer(time_point when, duration delta, callback_t&& callback)
 {
     mtimer_t t;
+    std::pair<bool, timer_index> ret;
     t.set_callback(std::move(callback));
     t.arm(when, delta);
-    auto ret = _timers.insert(t);
-    throw_system_error_on(!ret);
-    enable_timer(_timers.get_next_timeout());
-    return {t.get_id(), ret.get()};
+    {
+    boost::unique_lock<boost::shared_mutex> u_timers(_timer_mutex);
+    ret = _timers.insert(t);
+    }
+    if (ret.first)
+        enable_timer(_timers.get_next_timeout());
+    return {t.get_id(), ret.second};
 }
 
 void timer_manager::del_timer(timer_ret& ret)
 {
+    {
+    boost::unique_lock<boost::shared_mutex> u_timers(_timer_mutex);
     _timers.remove(ret);
+    }
 }
 
 timer_manager::timer_manager()
@@ -156,20 +169,24 @@ timer_manager::timer_manager()
 
 template <typename T, typename EnableFunc>
 void timer_manager::complete_timers(T& timers, EnableFunc&& enable_fn) {
-    auto expired_timers = timers.expire(timers.now());
+    typename T::timer_list_t  expired_timers;
+    //{
+        boost::unique_lock<boost::shared_mutex> u_timers(_timer_mutex);
+        expired_timers = timers.expire(timers.now());
+    //}
+    std::cout<<expired_timers.size()<<std::endl;
     for (auto& t : expired_timers) {
         t.second._expired = true;
     }
-    while (!expired_timers.empty()) {
-        auto t = expired_timers.begin();
-        if (t->second._armed) {
-            t->second._armed = false;
-            if (t->second._period) {
-                t->second.arm(clock::now() + t->second._period.get(), {t->second._period.get()});
-                _timers.insert(t->second);
+    for (auto& t : expired_timers) {
+        if (t.second._armed) {
+            t.second._armed = false;
+            if (t.second._period) {
+                t.second.arm(clock::now() + t.second._period.get(), {t.second._period.get()});
+                _timers.insert(t.second);
             }
             try {
-                t->second._callback();
+                t.second._callback();
             } catch (...) {
                 std::runtime_error("Timer callback failed: {}");
             }
@@ -187,9 +204,6 @@ void timer_manager::set_thread_pool(std::shared_ptr<thread_pool> pool)
 {
     _thread_pool.swap(pool);
 }
-
-
-
 
 /**********************************/
 timer_manager::signals::signals() : _pending_signals(0)
@@ -236,7 +250,11 @@ bool timer_manager::signals::poll_signal() {
         _pending_signals.fetch_and(~ato_signals, std::memory_order_relaxed);
         for (size_t i = 0; i < sizeof(ato_signals)*8; i++) {
             if (ato_signals & (1ull << i)) {
-               _signal_handlers.at(i)._handler();
+                if(timer_manager::Instance()._thread_pool && (!timer_manager::Instance()._thread_pool->stopped())){
+                    timer_manager::Instance()._thread_pool->enqueue(_signal_handlers.at(i)._handler);
+                }
+                else
+                    _signal_handlers.at(i)._handler();
             }
         }
     }
@@ -248,6 +266,7 @@ bool timer_manager::signals::pure_poll_signal() const {
 }
 
 void timer_manager::signals::action(int signo, siginfo_t* siginfo, void* ignore) {
+    std::cout<<"action..."<<std::endl;
     timer_manager::Instance()._signals._pending_signals.fetch_or(1ull << signo, std::memory_order_relaxed);
     if ((timer_manager::Instance()._thread_pool)){
         timer_manager::Instance()._thread_pool->notify_monitor();
@@ -256,14 +275,16 @@ void timer_manager::signals::action(int signo, siginfo_t* siginfo, void* ignore)
 
 void thread_pool::recycle()
 {
-    eventfd_t  value;
+    eventfd_t  value = 0;
     while (!stop.load(std::memory_order_relaxed))
     {
         auto ret = read(monitorfd, &value, sizeof(value));
-        if ( ret != sizeof(value) )
+        if (value != 1 || ret != sizeof(value)){
             continue;
-        if (timer_manager::Instance()._signals.pure_poll_signal())
+        }
+        if (timer_manager::Instance()._signals.pure_poll_signal()){
             timer_manager::Instance()._signals.poll_signal();
+        }
     }
 }
 

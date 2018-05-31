@@ -101,12 +101,12 @@ else()
   endif()
 endif()
  
-set(CMAKE_EXE_LINKER_FLAGS "-lrt -lpthread")
+set(CMAKE_EXE_LINKER_FLAGS "-lrt -lpthread -lboost_thread")
  
 set(SOURCES
         src/example.cc
         #src/example_class.cc
-        #src/example_thread.cc
+        src/example_thread.cc
 )
 
 include_directories(
