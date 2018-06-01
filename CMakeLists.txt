@@ -103,6 +103,14 @@ endif()
  
 set(CMAKE_EXE_LINKER_FLAGS "-lrt -lpthread -lboost_thread")
  
+set(BASESOURCES
+    include/timer/timer-manager.cc
+    include/timer/thread-pool.cc
+#    include/timer/timer.cc
+#    include/timer/timer.cc
+#    include/timer/timer.cc
+#    include/timer/timer.cc
+)
 set(SOURCES
         src/example.cc
         #src/example_class.cc
@@ -134,7 +142,7 @@ set(${PROJECT_NAME_UP}_IMPORT_LIB ${${PROJECT_NAME}_SHARED_LIB})
  
 foreach(sourcefile ${SOURCES})
     get_filename_component(exename ${sourcefile} NAME_WE)
-    add_executable(${exename} ${sourcefile})
+    add_executable(${exename} ${sourcefile} ${BASESOURCES})
     target_link_libraries(${exename}  ${THIRDPARTY_LIBS})
 endforeach(sourcefile)
  

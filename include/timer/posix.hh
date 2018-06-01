@@ -2,8 +2,7 @@
 
 #include <chrono>
 #include <system_error>
-
-using steady_clock_type = std::chrono::steady_clock;
+#include "timer-types.hh"
 
 inline void throw_system_error_on(bool condition, const char* what_arg="")
 //inline void throw_system_error_on(bool condition, const char* what_arg)
@@ -23,7 +22,7 @@ inline void throw_pthread_error(T r)
 
 
 
-timespec to_timespec(steady_clock_type::time_point t)
+inline timespec to_timespec(time_point t)
 {
     using ns = std::chrono::nanoseconds;
     auto n = std::chrono::duration_cast<ns>(t.time_since_epoch()).count();

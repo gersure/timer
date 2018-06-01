@@ -5,7 +5,7 @@
 #include <functional>
 #include <boost/noncopyable.hpp>
 #include "boost/optional.hpp"
-#include "timer_types.hh"
+#include "timer-types.hh"
 
 
 class timer : boost::noncopyable{
@@ -63,9 +63,8 @@ private:
     timer*  _ptimer;
 };
 
-std::atomic<uint64_t> timer::g_timer_id(0);
 
-timer::timer(duration delta, callback_t&& callback, timer_id timeid)
+inline timer::timer(duration delta, callback_t&& callback, timer_id timeid)
     : _callback(std::move(callback)), _timer_id(timeid)
 {
     arm(delta);

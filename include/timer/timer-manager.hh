@@ -11,10 +11,45 @@
 #include "posix.hh"
 #include "singleton.hh"
 #include "timer.hh"
-#include "timer-set.hh"
-#include "thread_pool.hh"
-#include "timer_types.hh"
+#include "thread-pool.hh"
+#include "timer-types.hh"
 
+class timer_set {
+private:
+    static constexpr timestamp_t max_timestamp = std::numeric_limits<timestamp_t>::max();
+
+    timer_set_t _buckets;
+    timestamp_t _last;
+    timestamp_t _next;
+public:
+    friend class timer;
+    friend class timer_handle;
+
+private:
+    static timestamp_t get_timestamp(time_point _time_point){
+        return _time_point.time_since_epoch().count();
+    }
+    static timestamp_t get_timestamp(timer& t){
+        return get_timestamp(t.get_timeout());
+    }
+
+public:
+    timer_set() : _last(0) , _next(max_timestamp) { }
+    ~timer_set();
+
+    bool insert(timer_handle& h);
+    void remove(timer_handle& h);
+    timer_set_t expire(time_point tnow);
+
+    void clear();
+    size_t size() const { return _buckets.size(); }
+    bool empty() const { return (_buckets.size()==0); }
+    time_point now() { return Clock::now(); }
+    time_point get_next_timeout() const {
+        return time_point(duration(std::max(_last, _next)));
+    }
+
+};
 
 class timer_manager : public Singleton<timer_manager>{
 public:
@@ -36,7 +71,7 @@ public:
     void set_thread_pool(std::shared_ptr<thread_pool> pool);
 
     void complete_timers();    
-    void enable_timer(steady_clock_type::time_point when);
+    void enable_timer(time_point when);
 public:
     timer_handle add_timer(duration delta, callback_t&& callback);
     timer_handle add_timer(time_point when, duration delta, callback_t&& callback);
@@ -48,111 +83,7 @@ public:
     friend class Singleton<timer_manager>;
 };
 
-void timer_manager::enable_timer(steady_clock_type::time_point when)
-{
-    itimerspec its, old;
-    its.it_interval = {};
-    its.it_value = to_timespec(when);
-    auto ret = timerfd_settime(_timerfd, TFD_TIMER_ABSTIME, &its, &old);
-    throw_system_error_on(ret == -1);
-}
-
-timer_handle  timer_manager::add_timer(duration delta, callback_t&& callback)
-{
-    timer *p = new timer(delta, std::move(callback));
-    timer_handle h( p, p->get_id());
-    boost::unique_lock<boost::shared_mutex> u_timers(_timer_mutex);
-    if (_timers.insert(h))
-        enable_timer(_timers.get_next_timeout());
-    return h;
-}
-
-timer_handle timer_manager::add_timer(time_point when, duration delta, callback_t&& callback)
-{
-    timer* p = new timer;
-    p->set_callback(std::move(callback));
-    p->arm(when, delta);
-    timer_handle h(p, p->get_id());
-    boost::unique_lock<boost::shared_mutex> u_timers(_timer_mutex);
-    if (_timers.insert(h))
-        enable_timer(_timers.get_next_timeout());
-    return h;
-}
-
-void timer_manager::del_timer(timer_handle& h)
-{
-    {
-    boost::unique_lock<boost::shared_mutex> u_timers(_timer_mutex);
-    _timers.remove(h);
-    }
-}
-
-timer_manager::timer_manager()
-{
-    _timerfd = timerfd_create(CLOCK_MONOTONIC, 0);
-    throw_system_error_on(_timerfd == (-1), strerror(errno));
-}
 
 
-void timer_manager::complete_timers() {
-    uint64_t  expire = {};
-    read(_timerfd, &expire, sizeof(expire));
-    timer_set_t  expired_timers;
-    {
-        boost::unique_lock<boost::shared_mutex> u_timers(_timer_mutex);
-        expired_timers = _timers.expire(_timers.now());
-    }
-    for (auto t : expired_timers) {
-        t.get_timer()->_expired = true;
-    }
-    for (auto t : expired_timers) {
-        if (t.get_timer()->_armed) {
-            t.get_timer()->_armed = false;
-            if (t.get_timer()->_period) {
-                t.get_timer()->arm(Clock::now() + t.get_timer()->_period.get(), {t.get_timer()->_period.get()});
-                _timers.insert(t);
-            }
-            if (!_thread_pool->stopped())
-                _thread_pool->enqueue(t.get_timer()->get_callback());
-            else
-                t.get_timer()->get_callback()();
-            if (!t.get_timer()->_period){
-                delete t.get_timer();
-            }
-        }else{
-            delete t.get_timer();
-        }
-    }
-    boost::shared_lock<boost::shared_mutex> lk(_fd_mutex);
-    if (!_timers.empty() && _timerfd > 0){
-        enable_timer(_timers.get_next_timeout());
-    }
-    return;
-}
 
-
-timer_manager::~timer_manager()
-{
-    {
-        boost::unique_lock<boost::shared_mutex> lk(_fd_mutex);
-        if (!_thread_pool){
-            close(_timerfd);
-            _timerfd = 0;
-        }
-    }
-}
-
-void timer_manager::set_thread_pool(std::shared_ptr<thread_pool> pool)
-{
-    _thread_pool.swap(pool);
-    _thread_pool->at_exit(timer_manager::completed);
-}
-
-void thread_pool::recycle()
-{
-    while (!stop.load(std::memory_order_relaxed))
-    {
-        timer_manager::Instance().complete_timers();
-    }
-}
 

@@ -2,7 +2,6 @@
 #include <thread>
 #include <memory>
 #include "timer/timer-manager.hh"
-#include "timer/thread_pool.hh"
 
 using namespace std;
 int main(int argc, char *argv[])
