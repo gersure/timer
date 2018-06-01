@@ -19,8 +19,8 @@ int main(int argc, char *argv[])
             });
 
     for(int i=0; i< 10;i++){
-        auto ret = timer_manager::Instance().add_timer(std::chrono::seconds(i+1), [](){
-                cout<<"timer ~ ..."<<endl;
+        auto ret = timer_manager::Instance().add_timer(std::chrono::seconds(i+1), [i](){
+                cout<<"timer :"<<i<<" timeout"<<endl;
                 });
         if (i==5)
             timer_manager::Instance().del_timer(ret);

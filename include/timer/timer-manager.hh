@@ -140,7 +140,7 @@ timer_manager::~timer_manager()
 {
     {
         boost::unique_lock<boost::shared_mutex> lk(_fd_mutex);
-        if (!thread_pool){
+        if (!_thread_pool){
             close(_timerfd);
             _timerfd = 0;
         }
