@@ -35,6 +35,7 @@ public:
     timer(timer&& t) noexcept;
 
     void set_callback(callback_t&& callback);
+    callback_t get_callback( ) { return _callback; }
     void arm(duration delta);
     void arm(time_point until, boost::optional<duration> period = {});
 
@@ -53,18 +54,21 @@ template <typename Clock>
 timer<Clock>::timer(duration delta, callback_t&& callback, timer_id timeid)
     : _callback(std::move(callback)), _timer_id(timeid)
 {
-    arm(delta);
+//    arm(delta);
+    _expiry = Clock::now()+delta;
+    _armed = true;
+    _expired = false;
 }
 
 template <typename Clock>
-timer<Clock>::timer(const timer& t) noexcept : _callback(std::move(t._callback)) , _expiry(std::move(t._expiry))
-    , _period(std::move(t._period)) , _armed(t._armed), _expired(t._expired) , _timer_id(t._timer_id)
+timer<Clock>::timer(const timer& t) noexcept : _callback(t._callback) , _expiry(t._expiry)
+    , _period(t._period) , _armed(t._armed), _expired(t._expired) , _timer_id(t._timer_id)
 {
 }
 
 template <typename Clock>
-timer<Clock>::timer(timer&& t) noexcept : _callback(std::move(t._callback)) , _expiry(std::move(t._expiry))
-    , _period(std::move(t._period)) , _armed(t._armed), _expired(t._expired) , _timer_id(t._timer_id)
+timer<Clock>::timer(timer&& t) noexcept : _callback(t._callback) , _expiry(t._expiry)
+    , _period(t._period) , _armed(t._armed), _expired(t._expired) , _timer_id(t._timer_id)
 {
     t._armed = false;
 }

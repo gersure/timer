@@ -16,7 +16,6 @@ public:
     template<class F, class... Args>
     auto enqueue(F&& f, Args&&... args)
         -> std::future<typename std::result_of<F(Args...)>::type>;
-    void notify_monitor();
 
     bool stopped(){ return stop.load(std::memory_order_relaxed); }
     ~thread_pool() noexcept;
@@ -41,7 +40,6 @@ private:
     // for recycle idle threads
     static thread_local bool working;
     std::atomic< unsigned > maxIdle;
-    int         monitorfd;
     std::thread monitor;
 };
 
@@ -52,14 +50,6 @@ inline thread_pool::thread_pool()
     :   stop(false), waiters(0)
 {
     maxIdle = std::max< unsigned >(1, static_cast<int>(std::thread::hardware_concurrency()));
-     monitorfd = ::eventfd(1,0);
-    assert(monitorfd != -1);
-    //   for (int i= 0; i < (maxIdle*2+1); i++)
-    //   {
-    //       std::thread  t([this]() { this->work(); } );
-    //       workers.push_back(std::move(t));
-    //   }
-
     monitor = std::thread([this]() { this->recycle(); } );
 }
 
@@ -106,10 +96,8 @@ inline thread_pool::~thread_pool() noexcept
     for(auto& worker: workers)
         worker.join();
 
-    notify_monitor();
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    close(monitorfd);
-    monitor.join();
+    if (monitor.joinable())
+        monitor.join();
 }
 
 inline void thread_pool::work()
@@ -159,12 +147,6 @@ inline void thread_pool::work()
 //        }
 //    }
 //}
-void thread_pool::notify_monitor()
-{
-    eventfd_t  value = 1;
-    auto ret = write(monitorfd, &value, sizeof(value));
-    assert(ret == sizeof(eventfd_t));
-}
 
 
 inline std::shared_ptr<thread_pool>  make_threadpool()

@@ -1,10 +1,10 @@
 #pragma once
 
-#include <signal.h>
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <atomic>
 #include <unordered_map>
+#include <sys/timerfd.h>
 #include <boost/thread/thread.hpp>
 #include <boost/thread/locks.hpp>
 
@@ -13,34 +13,6 @@
 #include "timer.hh"
 #include "timer-set.hh"
 #include "thread_pool.hh"
-
-
-inline int alarm_signal()
-{
-    return SIGRTMIN;
-}
-
-inline sigset_t make_sigset_mask(int signo)
-{
-    sigset_t set;
-    sigemptyset(&set);
-    sigaddset(&set, signo);
-    return set;
-}
-
-inline sigset_t make_full_sigset_mask()
-{
-    sigset_t set;
-    sigfillset(&set);
-    return set;
-}
-
-inline sigset_t make_empty_sigset_mask()
-{
-    sigset_t set;
-    sigemptyset(&set);
-    return set;
-}
 
 
 class timer_manager : public Singleton<timer_manager>{
@@ -54,39 +26,20 @@ public:
     typedef  timer_set<mtimer_t>::timer_index  timer_index;
     //typedef  typename std::pair<timer_id, timer_index> timer_ret;
     using timer_ret = std::pair<timer_id, timer_index>;
-    timer_t  _steady_clock_timer = {};
+private:
+    int _timerfd = {};
     timer_set<mtimer_t> _timers;
     boost::shared_mutex   _timer_mutex;
-private:
+    boost::shared_mutex   _fd_mutex;
+
     timer_manager();
     ~timer_manager();
 
-    class signals{
-        public:
-            signals();
-            ~signals();
-
-            bool poll_signal();
-            bool pure_poll_signal() const;
-            void handle_signal(int signo, std::function<void ()>&& handler);
-            void handle_signal_once(int signo, std::function<void ()>&& handler);
-            static void action(int signo, siginfo_t* siginfo, void* ignore);
-        private:
-
-            struct signal_handler {
-                signal_handler(int signo, std::function<void ()>&& handler);
-                std::function<void ()> _handler;
-            };
-            std::atomic<uint64_t> _pending_signals;
-            std::unordered_map<int, signal_handler> _signal_handlers;
-    };
 public:
-    signals _signals;
     std::shared_ptr<thread_pool> _thread_pool;
     void set_thread_pool(std::shared_ptr<thread_pool> pool);
 
-    template <typename T, typename EnableFunc>
-        void complete_timers(T& timers, EnableFunc&& enable_fn);
+    void complete_timers();
     void enable_timer(steady_clock_type::time_point when);
 public:
     timer_ret add_timer(duration delta, callback_t&& callback);
@@ -99,10 +52,11 @@ public:
 
 void timer_manager::enable_timer(steady_clock_type::time_point when)
 {
-    itimerspec its;
+    itimerspec its, old;
     its.it_interval = {};
     its.it_value = to_timespec(when);
-    auto ret = timer_settime(_steady_clock_timer, TIMER_ABSTIME, &its, NULL);
+    std::cout<<"enable_time:\t"<<its.it_value.tv_sec<<"s:"<<its.it_value.tv_nsec<<"ns"<<std::endl;
+    auto ret = timerfd_settime(_timerfd, TFD_TIMER_ABSTIME, &its, &old);
     throw_system_error_on(ret == -1);
 }
 
@@ -110,10 +64,10 @@ timer_manager::timer_ret  timer_manager::add_timer(duration delta, callback_t&& 
 {
     std::pair<bool, timer_index> ret;
     mtimer_t t(delta, std::move(callback));
-    {
+
     boost::unique_lock<boost::shared_mutex> u_timers(_timer_mutex);
     ret = _timers.insert(t);
-    }
+
     if (ret.first)
         enable_timer(_timers.get_next_timeout());
     return {t.get_id(), ret.second};
@@ -125,10 +79,10 @@ timer_manager::timer_ret timer_manager::add_timer(time_point when, duration delt
     std::pair<bool, timer_index> ret;
     t.set_callback(std::move(callback));
     t.arm(when, delta);
-    {
+
     boost::unique_lock<boost::shared_mutex> u_timers(_timer_mutex);
     ret = _timers.insert(t);
-    }
+
     if (ret.first)
         enable_timer(_timers.get_next_timeout());
     return {t.get_id(), ret.second};
@@ -144,37 +98,25 @@ void timer_manager::del_timer(timer_ret& ret)
 
 timer_manager::timer_manager()
 {
-    sigset_t mask;
-    sigemptyset(&mask);
-    sigaddset(&mask, alarm_signal());
-    auto r = ::pthread_sigmask(SIG_BLOCK, &mask, NULL);
-    assert( r == 0 );
-
-    struct sigevent sev;
-    sev.sigev_notify = SIGEV_THREAD_ID;
-    sev._sigev_un._tid = syscall(SYS_gettid);
-    sev.sigev_signo = alarm_signal();
-    r = timer_create(CLOCK_MONOTONIC, &sev, &_steady_clock_timer);
-    assert(r == 0);
-
-    _signals.handle_signal(alarm_signal(), [this] {
-            complete_timers(_timers, [this] {
-                if (!_timers.empty()){
-                    enable_timer(_timers.get_next_timeout());
-                }
-            });
-    });
+    _timerfd = timerfd_create(CLOCK_MONOTONIC, 0);
+    throw_system_error_on(_timerfd == (-1), strerror(errno));
 }
 
 
-template <typename T, typename EnableFunc>
-void timer_manager::complete_timers(T& timers, EnableFunc&& enable_fn) {
-    typename T::timer_list_t  expired_timers;
-    //{
+void timer_manager::complete_timers() {
+    uint64_t  expire = {};
+    auto ret = read(_timerfd, &expire, sizeof(expire));
+//    if (ret != sizeof(uint64_t)){
+//        return;
+//    }
+    std::cout<<"ret:"<<ret<<"expire:"<<expire<<std::endl;
+    std::cout<<"-------------size:"<<_timers.size()<<std::endl;
+
+    typename timer_set<mtimer_t>::timer_list_t  expired_timers;
+    {
         boost::unique_lock<boost::shared_mutex> u_timers(_timer_mutex);
-        expired_timers = timers.expire(timers.now());
-    //}
-    std::cout<<expired_timers.size()<<std::endl;
+        expired_timers = _timers.expire(_timers.now());
+    }
     for (auto& t : expired_timers) {
         t.second._expired = true;
     }
@@ -186,105 +128,40 @@ void timer_manager::complete_timers(T& timers, EnableFunc&& enable_fn) {
                 _timers.insert(t.second);
             }
             try {
-                t.second._callback();
+                _thread_pool->enqueue(t.second.get_callback());
             } catch (...) {
                 std::runtime_error("Timer callback failed: {}");
             }
         }
     }
-    enable_fn();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    boost::shared_lock<boost::shared_mutex> lk(_fd_mutex);
+    if (!_timers.empty() && _timerfd > 0){
+        enable_timer(_timers.get_next_timeout());
+    }
     return;
 }
 
 
 timer_manager::~timer_manager()
-{}
+{
+    {
+        boost::unique_lock<boost::shared_mutex> lk(_fd_mutex);
+        close(_timerfd);
+        _timerfd = 0;
+    }
+}
 
 void timer_manager::set_thread_pool(std::shared_ptr<thread_pool> pool)
 {
     _thread_pool.swap(pool);
 }
 
-/**********************************/
-timer_manager::signals::signals() : _pending_signals(0)
-{ }
-
-timer_manager::signals::~signals() {
-    sigset_t mask;
-    sigfillset(&mask);
-    ::pthread_sigmask(SIG_BLOCK, &mask, NULL);
-}
-
-timer_manager::signals::signal_handler::signal_handler(int signo, std::function<void ()>&& handler)
-        : _handler(std::move(handler)) {
-    struct sigaction sa;
-    sa.sa_sigaction = action;
-    sa.sa_mask = make_empty_sigset_mask();
-    sa.sa_flags = SA_SIGINFO | SA_RESTART;
-    auto r = ::sigaction(signo, &sa, nullptr);
-    throw_system_error_on(r == -1);
-    auto mask = make_sigset_mask(signo);
-    r = ::pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
-    throw_pthread_error(r);
-}
-
-void
-timer_manager::signals::handle_signal(int signo, std::function<void ()>&& handler) {
-    _signal_handlers.emplace(std::piecewise_construct,
-        std::make_tuple(signo), std::make_tuple(signo, std::move(handler)));
-}
-
-void
-timer_manager::signals::handle_signal_once(int signo, std::function<void ()>&& handler) {
-    return handle_signal(signo, [fired = false, handler = std::move(handler)] () mutable {
-        if (!fired) {
-            fired = true;
-            handler();
-        }
-    });
-}
-
-bool timer_manager::signals::poll_signal() {
-    auto ato_signals = _pending_signals.load(std::memory_order_relaxed);
-    if (ato_signals) {
-        _pending_signals.fetch_and(~ato_signals, std::memory_order_relaxed);
-        for (size_t i = 0; i < sizeof(ato_signals)*8; i++) {
-            if (ato_signals & (1ull << i)) {
-                if(timer_manager::Instance()._thread_pool && (!timer_manager::Instance()._thread_pool->stopped())){
-                    timer_manager::Instance()._thread_pool->enqueue(_signal_handlers.at(i)._handler);
-                }
-                else
-                    _signal_handlers.at(i)._handler();
-            }
-        }
-    }
-    return ato_signals;
-}
-
-bool timer_manager::signals::pure_poll_signal() const {
-    return _pending_signals.load(std::memory_order_relaxed);
-}
-
-void timer_manager::signals::action(int signo, siginfo_t* siginfo, void* ignore) {
-    std::cout<<"action..."<<std::endl;
-    timer_manager::Instance()._signals._pending_signals.fetch_or(1ull << signo, std::memory_order_relaxed);
-    if ((timer_manager::Instance()._thread_pool)){
-        timer_manager::Instance()._thread_pool->notify_monitor();
-    }
-}
-
 void thread_pool::recycle()
 {
-    eventfd_t  value = 0;
     while (!stop.load(std::memory_order_relaxed))
     {
-        auto ret = read(monitorfd, &value, sizeof(value));
-        if (value != 1 || ret != sizeof(value)){
-            continue;
-        }
-        if (timer_manager::Instance()._signals.pure_poll_signal()){
-            timer_manager::Instance()._signals.poll_signal();
-        }
+        timer_manager::Instance().complete_timers();
     }
 }
 

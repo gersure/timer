@@ -6,8 +6,10 @@
 #include <bitset>
 #include <array>
 #include <cmath>
+#include <vector>
 #include <boost/optional.hpp>
 #include <boost/intrusive/list.hpp>
+#include "posix.hh"
 #include "bitset-iter.hh"
 
 template<typename Timer>
@@ -18,6 +20,7 @@ public:
     using timer_id = typename Timer::timer_id;
     using time_point   = typename Timer::time_point;
     using timer_list_t = std::unordered_map<timer_id, Timer>;
+//    using timer_set_t = std::multiset<Timer>;
 private:
     using duration = typename Timer::duration;
     using timestamp_t = typename Timer::duration::rep;
@@ -28,7 +31,7 @@ private:
     static constexpr int n_buckets = timestamp_bits + 1;
     static constexpr double n_index_bits = std::ceil(std::sqrt(n_buckets));
 
-    std::array<timer_list_t, n_buckets> _buckets;
+    std::vector<timer_list_t, n_buckets> _buckets;
     timestamp_t _last;
     timestamp_t _next;
 
@@ -42,17 +45,6 @@ private:
     static timestamp_t get_timestamp(Timer& timer)
     {
         return get_timestamp(timer.get_timeout());
-    }
-
-    int get_index(timestamp_t timestamp) const
-    {
-        if (timestamp <= _last) {
-            return n_buckets - 1;
-        }
-
-        auto index = bitsets::count_leading_zeros(timestamp ^ _last);
-        assert(index < n_buckets - 1);
-        return index;
     }
 
     int get_index(Timer& timer) const
@@ -84,7 +76,6 @@ public:
     {
         auto timestamp = get_timestamp(timer);
         auto index = get_index(timestamp);
-        std::cout<<"index:"<<index<<"+1"<<std::endl;
         _buckets[index].insert({timer.get_id(), timer});
         _non_empty_buckets[index] = true;
 
@@ -129,21 +120,25 @@ public:
         _next = max_timestamp;
 
         auto& list = _buckets[index];
+        std::vector<timer_id> vecid;
+        std::cout<<"timer nums:"<<list.size()<<std::endl;
         for (auto& timer : list) {
             //auto timer = list.begin();
             if (timer.second.get_timeout() <= tnow) {
                 exp.insert({timer.second.get_id(), timer.second});
-            }
-            else{
+                vecid.push_back(timer.second.get_id());
+            } else{
                 if (get_timestamp(timer.second) < _next)
                     _next = get_timestamp(timer.second);
             }
         }
-        for(auto& timer : list){
-            if (timer.second.get_timeout() <= tnow) {
-                remove({timer.second.get_id(), index});
-            }
+
+        int count = 0;
+        for (auto& id : vecid){
+            count++;
+            list.erase(id);
         }
+        std::cout<<"expired timers:"<<count<<std::endl;
 
         _non_empty_buckets[index] = !list.empty();
 
@@ -156,8 +151,12 @@ public:
     }
 
    time_point get_next_timeout() const
-    {
+    {/*
+       std::cout<<"get_next_timeout:\t"
+       <<to_timespec(time_point(duration(std::max(_last, _next)))).tv_sec<<"s:"
+               <<to_timespec(time_point(duration(std::max(_last, _next)))).tv_nsec<<"ns"<<std::endl;*/
         return time_point(duration(std::max(_last, _next)));
+//        return time_point(duration(max_timestamp));
     }
 
    void clear()
@@ -172,6 +171,7 @@ public:
         size_t res = 0;
         for (int i : bitsets::for_each_set(_non_empty_buckets)) {
             res += _buckets[i].size();
+            std::cout<<"+++++++++index:"<<i<<std::endl;
         }
         return res;
     }
