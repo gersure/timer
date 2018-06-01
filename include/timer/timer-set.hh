@@ -6,24 +6,26 @@
 #include <bitset>
 #include <array>
 #include <cmath>
-#include <vector>
+#include <set>
 #include <boost/optional.hpp>
 #include <boost/intrusive/list.hpp>
 #include "posix.hh"
-#include "bitset-iter.hh"
+#include "timer.hh"
 
-template<typename Timer>
+class timer_handle;
 class timer_set {
 public:
-    //using timer_t = typename Timer;
+    friend class timer;
+    friend class timer_handle;
     using timer_index = int;
-    using timer_id = typename Timer::timer_id;
-    using time_point   = typename Timer::time_point;
-    using timer_list_t = std::unordered_map<timer_id, Timer>;
-//    using timer_set_t = std::multiset<Timer>;
+    using timer_set_t = std::multiset<timer_handle>;
 private:
-    using duration = typename Timer::duration;
-    using timestamp_t = typename Timer::duration::rep;
+    typedef uint64_t timer_id;
+    typedef std::chrono::steady_clock clock;
+    typedef typename clock::duration duration;
+    typedef typename clock::time_point time_point;
+    using callback_t = std::function<void()>;
+    using timestamp_t = typename duration::rep;
 
     static constexpr timestamp_t max_timestamp = std::numeric_limits<timestamp_t>::max();
     static constexpr int timestamp_bits = std::numeric_limits<timestamp_t>::digits;
@@ -31,158 +33,107 @@ private:
     static constexpr int n_buckets = timestamp_bits + 1;
     static constexpr double n_index_bits = std::ceil(std::sqrt(n_buckets));
 
-    std::vector<timer_list_t, n_buckets> _buckets;
+    timer_set_t _buckets;
     timestamp_t _last;
     timestamp_t _next;
-
-    std::bitset<n_buckets> _non_empty_buckets;
 private:
     static timestamp_t get_timestamp(time_point _time_point)
     {
         return _time_point.time_since_epoch().count();
     }
 
-    static timestamp_t get_timestamp(Timer& timer)
+    static timestamp_t get_timestamp(timer& t)
     {
-        return get_timestamp(timer.get_timeout());
+        return get_timestamp(t.get_timeout());
     }
 
-    int get_index(Timer& timer) const
-    {
-        return get_index(get_timestamp(timer));
-    }
-
-    int get_last_non_empty_bucket() const
-    {
-        return bitsets::get_last_set(_non_empty_buckets);
-    }
 public:
     timer_set()
         : _last(0)
         , _next(max_timestamp)
-        , _non_empty_buckets(0)
     {
     }
 
     ~timer_set() {
-        for (auto&& list : _buckets) {
-            if (!list.empty()) {
-                list.clear();
-            }
+        while (!_buckets.empty()) {
+            auto h = _buckets.begin();
+            _buckets.erase(h);
+            delete h->_ptimer;
         }
     }
 
-    std::pair<bool, timer_index> insert(Timer& timer)
+    bool insert(timer_handle& h)
     {
-        auto timestamp = get_timestamp(timer);
-        auto index = get_index(timestamp);
-        _buckets[index].insert({timer.get_id(), timer});
-        _non_empty_buckets[index] = true;
+        auto timestamp = get_timestamp(*(h._ptimer));
+        _buckets.insert(h);
 
         if (timestamp < _next) {
             _next = timestamp;
-            return {true ,index};
+            return true;
         }
-        return {false, index};
+        return false;
     }
 
-    void remove(const std::pair<timer_id, timer_index>& ret)
+    void remove(timer_handle& h)
     {
-        auto index = ret.second;
-        auto& list = _buckets[index];
-        auto search = list.find(ret.first);
-        if (search != list.end()){
-            list.erase(ret.first);
-            if (list.empty()) {
-                _non_empty_buckets[index] = false;
+        auto it1 = _buckets.lower_bound(h);
+        auto it2 = _buckets.upper_bound(h);
+        for(timer_set_t::iterator it = it1; it != it2; it++){
+            if(it->_ptimer->get_id() == h._id){
+                _buckets.erase(it);
+                return;
             }
         }
     }
 
-    timer_list_t expire(time_point tnow)
+    timer_set_t expire(time_point tnow)
     {
-        timer_list_t exp;
+        timer t;
+        timer_set_t exp;
+        t._expiry = tnow;
+
         auto timestamp = get_timestamp(tnow);
 
         if (timestamp < _last) {
             abort();
         }
 
-        auto index = get_index(timestamp);
-
-        for (int i : bitsets::for_each_set(_non_empty_buckets, index + 1)) {
-            exp.insert( _buckets[i].begin(), _buckets[i].end());
-            _buckets[i].clear();
-            _non_empty_buckets[i] = false;
-        }
-
+        auto it = _buckets.upper_bound({&t, t.get_id()});
+        exp.insert(_buckets.begin(), it);
+        _buckets.erase(_buckets.begin(), it);
         _last = timestamp;
-        _next = max_timestamp;
+        if (_buckets.size())
+            _next = get_timestamp(*(_buckets.begin()->_ptimer));
 
-        auto& list = _buckets[index];
-        std::vector<timer_id> vecid;
-        std::cout<<"timer nums:"<<list.size()<<std::endl;
-        for (auto& timer : list) {
-            //auto timer = list.begin();
-            if (timer.second.get_timeout() <= tnow) {
-                exp.insert({timer.second.get_id(), timer.second});
-                vecid.push_back(timer.second.get_id());
-            } else{
-                if (get_timestamp(timer.second) < _next)
-                    _next = get_timestamp(timer.second);
-            }
-        }
-
-        int count = 0;
-        for (auto& id : vecid){
-            count++;
-            list.erase(id);
-        }
-        std::cout<<"expired timers:"<<count<<std::endl;
-
-        _non_empty_buckets[index] = !list.empty();
-
-        if (_next == max_timestamp && _non_empty_buckets.any()) {
-            for (auto& timer : _buckets[get_last_non_empty_bucket()]) {
-                _next = std::min(_next, get_timestamp(timer.second));
-            }
-        }
         return exp;
     }
 
    time_point get_next_timeout() const
-    {/*
-       std::cout<<"get_next_timeout:\t"
-       <<to_timespec(time_point(duration(std::max(_last, _next)))).tv_sec<<"s:"
-               <<to_timespec(time_point(duration(std::max(_last, _next)))).tv_nsec<<"ns"<<std::endl;*/
+    {
         return time_point(duration(std::max(_last, _next)));
-//        return time_point(duration(max_timestamp));
     }
 
    void clear()
     {
-        for (int i : bitsets::for_each_set(_non_empty_buckets)) {
-            _buckets[i].clear();
-        }
+       while (!_buckets.empty()) {
+           auto h = _buckets.begin();
+           _buckets.erase(h);
+           delete h->_ptimer;
+       }
     }
 
     size_t size() const
     {
-        size_t res = 0;
-        for (int i : bitsets::for_each_set(_non_empty_buckets)) {
-            res += _buckets[i].size();
-            std::cout<<"+++++++++index:"<<i<<std::endl;
-        }
-        return res;
+        return _buckets.size();
     }
 
     bool empty() const
     {
-        return _non_empty_buckets.none();
+        return (_buckets.size()==0);
     }
 
     time_point now() {
-        return Timer::clock::now();
+        return timer::clock::now();
     }
 };
 

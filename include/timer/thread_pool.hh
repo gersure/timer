@@ -16,6 +16,10 @@ public:
     template<class F, class... Args>
     auto enqueue(F&& f, Args&&... args)
         -> std::future<typename std::result_of<F(Args...)>::type>;
+    void at_exit(std::function<void()>&& v) {
+        std::unique_lock<std::mutex> lk(exit_mutex);
+        exits.push(std::move(v));
+    }
 
     bool stopped(){ return stop.load(std::memory_order_relaxed); }
     ~thread_pool() noexcept;
@@ -30,8 +34,10 @@ private:
     std::vector< std::thread > workers;
     // the task queue
     std::queue< std::function<void()> > tasks;
+    std::queue< std::function<void()> > exits;
 
     // synchronization
+    std::mutex exit_mutex;
     std::mutex queue_mutex;
     std::condition_variable condition;
     std::atomic<bool> stop;
@@ -92,6 +98,14 @@ inline thread_pool::~thread_pool() noexcept
         std::unique_lock<std::mutex> lock(queue_mutex);
         stop.store(true, std::memory_order_relaxed);
     }
+    {
+        std::unique_lock<std::mutex> lk(exit_mutex);
+        while(!exits.empty()){
+            auto& fun = exits.front();
+            fun();
+            exits.pop();
+        }
+    }
     condition.notify_all();
     for(auto& worker: workers)
         worker.join();
@@ -127,26 +141,6 @@ inline void thread_pool::work()
 
     // if reach here, this thread is recycled by monitor thread
 }
-
-//inline void thread_pool::recycle()
-//{
-//    while (!stop)
-//    {
-//        std::this_thread::sleep_for(std::chrono::seconds(60));
-//
-//        std::unique_lock<std::mutex> lock(this->queue_mutex);
-//        if (stop)
-//            return;
-//
-//        auto nw = waiters;
-//        while (nw -- > maxIdle)
-//        {
-//            // the thread which fetch this task item will exit
-//            tasks.emplace([this]() { working = false; });
-//            condition.notify_one();
-//        }
-//    }
-//}
 
 
 inline std::shared_ptr<thread_pool>  make_threadpool()
