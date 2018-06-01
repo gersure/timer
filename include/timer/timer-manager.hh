@@ -13,33 +13,28 @@
 #include "timer.hh"
 #include "timer-set.hh"
 #include "thread_pool.hh"
+#include "timer_types.hh"
 
 
 class timer_manager : public Singleton<timer_manager>{
 public:
-    typedef  timer mtimer_t;
-    typedef  mtimer_t::clock clock;
-    typedef  mtimer_t::duration duration;
-    typedef  mtimer_t::time_point time_point;
-    typedef  mtimer_t::callback_t  callback_t;
-    //typedef  typename std::pair<timer_id, timer_index> timer_ret;
 private:
+    timer_manager();
+    ~timer_manager();
+
     int _timerfd = {};
     timer_set _timers;
     boost::shared_mutex   _timer_mutex;
     boost::shared_mutex   _fd_mutex;
-
-    timer_manager();
-    ~timer_manager();
-
+public:
+    static void completed(){
+        timer_manager::Instance().enable_timer(Clock::now());
+        close(timer_manager::Instance()._timerfd);
+    }
 public:
     std::shared_ptr<thread_pool> _thread_pool;
     void set_thread_pool(std::shared_ptr<thread_pool> pool);
 
-    static void completed(){
-        timer_manager::Instance().enable_timer(timer_manager::clock::now());
-        close(timer_manager::Instance()._timerfd);
-    }
     void complete_timers();    
     void enable_timer(steady_clock_type::time_point when);
 public:
@@ -64,7 +59,7 @@ void timer_manager::enable_timer(steady_clock_type::time_point when)
 
 timer_handle  timer_manager::add_timer(duration delta, callback_t&& callback)
 {
-    mtimer_t *p = new mtimer_t(delta, std::move(callback));
+    timer *p = new timer(delta, std::move(callback));
     timer_handle h( p, p->get_id());
     boost::unique_lock<boost::shared_mutex> u_timers(_timer_mutex);
     if (_timers.insert(h))
@@ -74,7 +69,7 @@ timer_handle  timer_manager::add_timer(duration delta, callback_t&& callback)
 
 timer_handle timer_manager::add_timer(time_point when, duration delta, callback_t&& callback)
 {
-    mtimer_t* p = new mtimer_t;
+    timer* p = new timer;
     p->set_callback(std::move(callback));
     p->arm(when, delta);
     timer_handle h(p, p->get_id());
@@ -101,8 +96,8 @@ timer_manager::timer_manager()
 
 void timer_manager::complete_timers() {
     uint64_t  expire = {};
-    auto ret = read(_timerfd, &expire, sizeof(expire));
-    typename timer_set::timer_set_t  expired_timers;
+    read(_timerfd, &expire, sizeof(expire));
+    timer_set_t  expired_timers;
     {
         boost::unique_lock<boost::shared_mutex> u_timers(_timer_mutex);
         expired_timers = _timers.expire(_timers.now());
@@ -114,7 +109,7 @@ void timer_manager::complete_timers() {
         if (t.get_timer()->_armed) {
             t.get_timer()->_armed = false;
             if (t.get_timer()->_period) {
-                t.get_timer()->arm(clock::now() + t.get_timer()->_period.get(), {t.get_timer()->_period.get()});
+                t.get_timer()->arm(Clock::now() + t.get_timer()->_period.get(), {t.get_timer()->_period.get()});
                 _timers.insert(t);
             }
             if (!_thread_pool->stopped())

@@ -5,17 +5,11 @@
 #include <functional>
 #include <boost/noncopyable.hpp>
 #include "boost/optional.hpp"
-
+#include "timer_types.hh"
 
 
 class timer : boost::noncopyable{
 public:
-    typedef uint64_t timer_id;
-    typedef std::chrono::steady_clock clock;
-    typedef typename clock::duration duration;
-    typedef typename clock::time_point time_point;
-    using callback_t = std::function<void()>;
-    using timestamp_t = typename duration::rep;
 private:
     callback_t _callback;
     time_point _expiry;
@@ -46,29 +40,6 @@ public:
     friend class timer_manager;
 };
 
-std::atomic<uint64_t> timer::g_timer_id(0);
-
-timer::timer(duration delta, callback_t&& callback, timer_id timeid)
-    : _callback(std::move(callback)), _timer_id(timeid)
-{
-    arm(delta);
-}
-
-inline void timer::set_callback(callback_t&& callback) {
-    _callback = std::move(callback);
-}
-
-inline void timer::arm(duration delta) {
-    return arm(clock::now() + delta);
-}
-
-inline void timer::arm(time_point until, boost::optional<duration> period) {
-    _period = period;
-    _expiry = until;
-    _armed = true;
-    _expired = false;
-}
-
 
 class timer_handle
 {
@@ -91,4 +62,29 @@ private:
     timer_id  _id;
     timer*  _ptimer;
 };
+
+std::atomic<uint64_t> timer::g_timer_id(0);
+
+timer::timer(duration delta, callback_t&& callback, timer_id timeid)
+    : _callback(std::move(callback)), _timer_id(timeid)
+{
+    arm(delta);
+}
+
+inline void timer::set_callback(callback_t&& callback) {
+    _callback = std::move(callback);
+}
+
+inline void timer::arm(duration delta) {
+    return arm(Clock::now() + delta);
+}
+
+inline void timer::arm(time_point until, boost::optional<duration> period) {
+    _period = period;
+    _expiry = until;
+    _armed = true;
+    _expired = false;
+}
+
+
 
