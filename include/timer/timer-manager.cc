@@ -36,7 +36,7 @@ void timer_set::remove(timer_handle& h)
 {
     auto it1 = _buckets.lower_bound(h);
     auto it2 = _buckets.upper_bound(h);
-    for(timer_set_t::iterator it = it1; it != it2; it++){
+    for(timer_set_t::iterator it = it1; it != _buckets.end() && it != it2; it++){
         if(it->_ptimer->get_id() == h._id){
             _buckets.erase(it);
             return;
@@ -102,6 +102,8 @@ void timer_manager::del_timer(timer_handle& h)
 {
     boost::unique_lock<boost::shared_mutex> u_timers(_timer_mutex);
     _timers.remove(h);
+    h._id = 0;
+    h._ptimer = nullptr; 
 }
 
 timer_manager::timer_manager()
