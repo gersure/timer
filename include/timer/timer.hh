@@ -47,15 +47,18 @@ public:
     friend class timer;
     friend class timer_set;
     friend class timer_manager;
-    
+
     typedef uint64_t timer_id;
     timer_handle() : _id(0), _ptimer(nullptr) { }
     timer_handle(timer* t, timer_id seq) : _id(seq), _ptimer(t) { }
 
     bool operator < (const timer_handle& h) const {
-        return _ptimer->_expiry < h._ptimer->_expiry;
+        if (h._ptimer)
+            return _ptimer->_expiry < h._ptimer->_expiry;
+        else
+            return false;
     }
-    
+
     bool armed() const { return _ptimer ? false : _ptimer->armed(); }
     timer_id get_id() const { return _id; }
     timer*  get_timer(){ return _ptimer; }
