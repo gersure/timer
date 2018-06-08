@@ -51,6 +51,7 @@ timer_set_t timer_set::expire(time_point tnow)
     t._expiry = tnow;
 
     auto timestamp = get_timestamp(tnow);
+    _next = max_timestamp;
 
     if (timestamp < _last) {
         abort();
