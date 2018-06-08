@@ -104,7 +104,7 @@ void timer_manager::del_timer(timer_handle& h)
     boost::unique_lock<boost::shared_mutex> u_timers(_timer_mutex);
     _timers.remove(h);
     h._id = 0;
-    h._ptimer = nullptr; 
+    h._ptimer = nullptr;
 }
 
 timer_manager::timer_manager()

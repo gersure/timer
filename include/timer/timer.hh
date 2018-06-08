@@ -60,7 +60,7 @@ public:
     }
 
     bool armed() const { return _ptimer ? false : _ptimer->armed(); }
-    timer_id get_id() const { return _id; }
+    timer_id get_id() const { return _ptimer ? _id : 0; }
     timer*  get_timer(){ return _ptimer; }
 private:
     timer_id  _id;
